@@ -4,6 +4,8 @@ from constants import*
 from dynamics import*
 from plasticity import*
 from tqdm import tqdm
+import os
+from datetime import datetime
 
 if torch.cuda.is_available():
 	torch.set_default_dtype(torch.float16)
@@ -57,6 +59,7 @@ def get_connectivity_matrices():
 
 	return U_slow,U_fast,J_slow,J_fast,w_mat,l_mat
 
+@torch.jit.script
 def simulation_step(v:torch.Tensor,
 					i_s:torch.Tensor,
 					i_f:torch.Tensor,
@@ -68,49 +71,80 @@ def simulation_step(v:torch.Tensor,
 					j_fast:torch.Tensor,
 					w:torch.Tensor,
 					u_slow:torch.Tensor,
-					u_fast:torch.Tensor):
+					u_fast:torch.Tensor,
+					v_th:torch.Tensor,
+					dtype:torch.dtype,
+					tau_s:torch.Tensor,
+					dt:float,
+					tau_ref:torch.Tensor,
+					v_reset:torch.Tensor,
+					tau_m:torch.Tensor,
+					u:float,
+					tau_rec:float,
+					alpha_rec:float,
+					beta_rec:float,
+					theta_x:float,
+					a_hebbian:float,
+					b_hebbian:float,
+					theta_ltp:float,
+					theta_ltd:float,
+					j_p:float,
+					j_d:float,):
 	
 	# we must first compute the total currents and update the membrane potential
 
-	sigma_v = sigma(v,THRESHOLD_POTENTIAL_VECTOR,DTYPE)
+	sigma_v = sigma(v,v_th=v_th,dtype=dtype)
 	x_sigma_v = x*sigma_v
 
-	i_s_new = i_s + dis_dt(i_s,TAU_S_VEC,DT,j_slow,x_sigma_v)
+	i_s_new = dis_dt(i_s,tau_s=tau_s,dt=dt,j_slow=j_slow,x_sigma_v=x_sigma_v)
 
 	i_f_new = j_fast @ x_sigma_v
-	# i_f_new = torch.sparse.mm(j_fast.to(torch.float32).to_sparse(),x_sigma_v.to(torch.float32).unsqueeze(-1))
-	# i_f_new = i_f_new.to(DTYPE).squeeze()
 
 	i_t = i_s + i_f + i_e
 
 	# we can then update the membrane potential
 
-	da = da_dt(v,MEMBRANE_REFRACTORY_VEC,THRESHOLD_POTENTIAL_VECTOR,DT)
-	dv = dv_dt(v,i_t,MEMBRANE_CONST_VEC,THRESHOLD_POTENTIAL_VECTOR,DT)
-	a_new = torch.zeros_like(a) + (a+da)*(a<1)
-	v_new = V_RESET_VECT*(a>=1) + (v+dv)*(a<1)
+	# a_new = da_dt(v,a,MEMBRANE_REFRACTORY_VEC,THRESHOLD_POTENTIAL_VECTOR,DT)
+	a_new = da_dt(v,a,tau_r=tau_ref,v_th=v_th,dt=dt)
+	# v_new = dv_dt(v=v,a=a,i=i_t,v_reset=V_RESET_VECT,tau_m=MEMBRANE_CONST_VEC,
+	# 		   v_th=THRESHOLD_POTENTIAL_VECTOR,dt=DT)
+	v_new = dv_dt(v=v,a=a,i=i_t,v_reset=v_reset,tau_m=tau_m,
+			   v_th=v_th,dt=dt)
 
 	# finally, we can update the hidden variables for plasticity
 
-	x_new = x + dx_dt(x,U_SPIKING_COST,TAU_RECOVERY,x_sigma_v,DT)
+	# x_new = dx_dt(x,U_SPIKING_COST,TAU_RECOVERY,x_sigma_v,DT)
+	x_new = dx_dt(x,u=u,tau_r=tau_rec,x_sigma_v=x_sigma_v,dt=dt)
 
-	r_mat = r_t(l=l,alpha=ALPHA_PLASTICITY_RECOVERY,beta=BETA_PLASTICITY_RECOVERY,
-			 theta_x=THETA_X_PLASTICITY_THRESHOLD)
+	# r_mat = r_t(l=l,alpha=ALPHA_PLASTICITY_RECOVERY,beta=BETA_PLASTICITY_RECOVERY,
+	# 		 theta_x=THETA_X_PLASTICITY_THRESHOLD)
+	
+	r_mat = r_t(l=l,alpha=alpha_rec,beta=beta_rec,theta_x=theta_x)
 
-	f_v_t = f_v(v,A_HEBBIAN,B_HEBBIAN,THETA_LTP,THETA_LTD,THRESHOLD_POTENTIAL_VECTOR,
-			 V_RESET_VECT)
+	# f_v_t = f_v(v,A_HEBBIAN,B_HEBBIAN,THETA_LTP,THETA_LTD,THRESHOLD_POTENTIAL_VECTOR,
+	# 		 V_RESET_VECT)
 	
-	h_t = rearrange(f_v_t,"n -> n 1") @ rearrange(sigma_v,"n -> 1 n")
+	f_v_t = f_v(v,a=a_hebbian,b=b_hebbian,theta_ltp=theta_ltp,
+			 theta_ltd=theta_ltd,v_th=v_th,v_reset=v_reset)
 	
-	l_new = l + dl_dt(h_t,w,r_mat,DT)
+	h_t = h_mat(f_v_t,sigma_v)
+	
+	# l_new = dl_dt(h_t,w,r_mat,l,DT)
+	l_new = dl_dt(h_t=h_t,w=w,r_t=r_mat,l=l,dt=dt)
 
 	# we don't want to create any new slow/fast connection so we need to mask
 	
-	j_fast_new = u_fast*update_j(j_fast,J_POTENTIATED,J_DEPRESSED,THETA_X_PLASTICITY_THRESHOLD,
-					   l,l_new)
+	# j_fast_new = update_j(j_fast,J_POTENTIATED,J_DEPRESSED,THETA_X_PLASTICITY_THRESHOLD,
+	# 				   l,l_new,u_fast)
 	
-	j_slow_new = u_slow*update_j(j_slow,J_POTENTIATED,J_DEPRESSED,THETA_X_PLASTICITY_THRESHOLD,
-					   l,l_new)
+	j_fast_new = update_j(j=j_fast,j_p=j_p,j_d=j_d,threshold=theta_x,l_old=l,
+					   l_new=l_new,u=u_fast)
+	
+	# j_slow_new = update_j(j_slow,J_POTENTIATED,J_DEPRESSED,THETA_X_PLASTICITY_THRESHOLD,
+	# 				   l,l_new,u_slow)
+	
+	j_slow_new = update_j(j=j_slow,j_p=j_p,j_d=j_d,threshold=theta_x,l_old=l,
+					   l_new=l_new,u=u_slow)
 	
 	return v_new,i_s_new,i_f_new,x_new,a_new,j_slow_new,j_fast_new
 
@@ -153,10 +187,39 @@ if __name__ == "__main__":
 																		j_fast=J_fast,
 																		w=W_mat,
 																		u_slow=U_slow,
-																		u_fast=U_fast)
+																		u_fast=U_fast,
+																		v_th=THRESHOLD_POTENTIAL_VECTOR,
+																		dtype=DTYPE,
+																		tau_s=TAU_S_VEC,
+																		dt=DT,
+																		tau_ref=MEMBRANE_REFRACTORY_VEC,
+																		v_reset=V_RESET_VECT,
+																		tau_m=MEMBRANE_CONST_VEC,
+																		u=U_SPIKING_COST,
+																		tau_rec=TAU_RECOVERY,
+																		alpha_rec=ALPHA_PLASTICITY_RECOVERY,
+																		beta_rec=BETA_PLASTICITY_RECOVERY,
+																		theta_x=THETA_X_PLASTICITY_THRESHOLD,
+																		a_hebbian=A_HEBBIAN,
+																		b_hebbian=B_HEBBIAN,
+																		theta_ltp=THETA_LTP,
+																		theta_ltd=THETA_LTD,
+																		j_p=J_POTENTIATED,
+																		j_d=J_DEPRESSED,)
 		
 		V_MEMBRANE_POTENTIALS[:,idx+1] = v_new
 		I_S_SLOW_CURRENTS[:,idx + 1] = i_s_new
 		I_F_FAST_CURRENTS[:,idx + 1] = i_f_new
 		X_RESOURCE_STATE_VAR[:,idx + 1] = x_new
 		A_SPIKING_STATE_VAR[:,idx + 1] = a_new
+
+	if not os.path.isdir("results"):
+		os.makedirs("results")
+	
+	d = {"membrane_potentials":V_MEMBRANE_POTENTIALS.cpu(),
+	  "slow_currents":I_S_SLOW_CURRENTS.cpu(),
+	  "fast_current":I_F_FAST_CURRENTS.cpu(),
+	  "x_resources":X_RESOURCE_STATE_VAR.cpu(),
+	  "spiking_state":A_SPIKING_STATE_VAR.cpu()}
+	
+	torch.save(d,os.path.join("results",f"results_{datetime.now().strftime('%Y_%m_%d_%H_%M')}.pt"))

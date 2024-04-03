@@ -22,7 +22,7 @@ def dx_dt(x:torch.Tensor,
 	Returns:
 		update for slow currents at time t+1
 	"""
-	return dt*((1-x)/tau_r)-u*x_sigma_v
+	return x + dt*((1-x)/tau_r)-u*x_sigma_v
 
 @torch.jit.script
 def r_t(l:torch.Tensor,
@@ -73,6 +73,7 @@ def f_v(v:torch.Tensor,
 def dl_dt(h_t:torch.Tensor,
 		  w:torch.Tensor,
 		  r_t:torch.Tensor,
+		  l:torch.Tensor,
 		  dt:float):
 	
 	"""
@@ -87,7 +88,7 @@ def dl_dt(h_t:torch.Tensor,
 	Returns:
 		n x n latent variable for plasticity
 	"""
-	return dt*w*(r_t+h_t)
+	return l+dt*w*(r_t+h_t)
 
 @torch.jit.script
 def update_j(j:torch.Tensor,
@@ -95,7 +96,8 @@ def update_j(j:torch.Tensor,
 			 j_d:float,
 			 threshold:float,
 			 l_old:torch.Tensor,
-			 l_new:torch.Tensor):
+			 l_new:torch.Tensor,
+			 u:torch.Tensor):
 
 	"""
 	Function for updating conductivity matrices based on plasticity latent variable
@@ -113,4 +115,10 @@ def update_j(j:torch.Tensor,
 	"""
 	a = (l_old<=threshold)*(threshold<l_new)
 	b = (l_old>=threshold)*(threshold>l_new)
-	return j_p*a + j_d*b + j*(1-(a+b).int())
+	return u*(j_p*a + j_d*b + j*(1-(a+b).int()))
+
+@torch.jit.script
+def h_mat(f_v_t:torch.Tensor,
+		  sigma_v:torch.Tensor):
+	
+	return f_v_t.unsqueeze(-1) @ sigma_v.unsqueeze(0)

@@ -20,7 +20,8 @@ def random_sparse(m:int,
 	mat[torch.rand(m,n)<p] = 1
 	return mat
 
-def sparse_square(n,p):
+def sparse_square(n:int,
+				  p:float):
 	"""
 	Function for creating a n x n sparse matrix with zeros on the diagonal
 

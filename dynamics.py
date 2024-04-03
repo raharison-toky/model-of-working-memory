@@ -47,10 +47,11 @@ def dis_dt(i_s:torch.Tensor,
 	Returns:
 		update for slow currents at time t+1
 	"""
-	return (dt/tau_s)*(-i_s + j_slow @ x_sigma_v)
+	return i_s + (dt/tau_s)*(-i_s + j_slow @ x_sigma_v)
 
 @torch.jit.script
 def da_dt(v:torch.Tensor,
+		  a:torch.Tensor,
 		  tau_r:torch.Tensor,
 		  v_th:torch.Tensor,
 		  dt:float):
@@ -67,11 +68,14 @@ def da_dt(v:torch.Tensor,
 	Returns:
 		vector of spiking hidden variable  update
 	"""
-	return (1/tau_r)*dt*(v>=v_th)
+	da = (1/tau_r)*dt*(v>=v_th)
+	return torch.zeros_like(a) + (a+da)*(a<1)
 
 @torch.jit.script
 def dv_dt(v:torch.Tensor,
+		  a:torch.Tensor,
 		  i:torch.Tensor,
+		  v_reset:torch.Tensor,
 		  tau_m:torch.Tensor,
 		  v_th:torch.Tensor,
 		  dt:float):
@@ -89,4 +93,5 @@ def dv_dt(v:torch.Tensor,
 	Returns:
 		vector of spiking hidden variable update
 	"""
-	return (-v/tau_m+i)*dt*(v<=v_th)
+	dv = (-v/tau_m+i)*dt*(v<=v_th)
+	return v_reset*(a>=1) + (v+dv)*(a<1)
