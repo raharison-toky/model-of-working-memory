@@ -2,6 +2,7 @@ import torch
 from einops import rearrange, repeat
 from typing import Tuple
 
+@torch.jit.script
 def dx_dt(x:torch.Tensor,
 		  u:float,
 		  tau_r:float,
@@ -23,6 +24,7 @@ def dx_dt(x:torch.Tensor,
 	"""
 	return dt*((1-x)/tau_r)-u*x_sigma_v
 
+@torch.jit.script
 def r_t(l:torch.Tensor,
 		alpha:float,
 		beta:float,
@@ -42,6 +44,7 @@ def r_t(l:torch.Tensor,
 	"""
 	return -alpha*((theta_x-l)>=0) + beta*((l-theta_x)>=0)
 
+@torch.jit.script
 def f_v(v:torch.Tensor,
 		a:float,
 		b:float,
@@ -66,6 +69,7 @@ def f_v(v:torch.Tensor,
 	"""
 	return a*(theta_ltp<=v)*(v<=v_th) - b*(v<=theta_ltd)*(v<=v_reset)
 
+@torch.jit.script
 def dl_dt(h_t:torch.Tensor,
 		  w:torch.Tensor,
 		  r_t:torch.Tensor,
@@ -85,6 +89,7 @@ def dl_dt(h_t:torch.Tensor,
 	"""
 	return dt*w*(r_t+h_t)
 
+@torch.jit.script
 def update_j(j:torch.Tensor,
 			 j_p:float,
 			 j_d:float,

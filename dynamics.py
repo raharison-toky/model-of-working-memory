@@ -2,8 +2,18 @@ import torch
 from einops import rearrange, repeat
 from typing import Tuple
 
+if torch.cuda.is_available():
+	torch.set_default_dtype(torch.float16)
+	torch.set_default_device("cuda")
+	DTYPE = torch.float16
+else:
+	torch.set_default_dtype(torch.float32)
+	DTYPE = torch.float32
+
+@torch.jit.script
 def sigma(v_t:torch.Tensor,
-		  v_th:torch.Tensor)->torch.Tensor:
+		  v_th:torch.Tensor,
+		  dtype:torch.dtype)->torch.Tensor:
 	"""
 	Function for verifying which neurons are spiking
 
@@ -14,10 +24,11 @@ def sigma(v_t:torch.Tensor,
 	Returns:
 		tensor of 0 (not spiking), 1 (spiking) 
 	"""
-	return (v_t>=v_th).float()
+	return (v_t>=v_th).to(dtype)
 
+@torch.jit.script
 def dis_dt(i_s:torch.Tensor,
-		   tau_s:float,
+		   tau_s:torch.Tensor,
 		   dt:float,
 		   j_slow:torch.Tensor,
 		   x_sigma_v:torch.Tensor)->torch.Tensor:
@@ -28,7 +39,7 @@ def dis_dt(i_s:torch.Tensor,
 
 	Args:
 		i_s: slow currents at time t
-		tau_s: time constant for slow currents
+		tau_s: tensor of time constants for slow currents
 		dt: time step for forward Euler
 		u_slow: synaptic conductance matrix for slow currents
 		x_sigma_v: boolean vector for spiking neurons
@@ -38,6 +49,7 @@ def dis_dt(i_s:torch.Tensor,
 	"""
 	return (dt/tau_s)*(-i_s + j_slow @ x_sigma_v)
 
+@torch.jit.script
 def da_dt(v:torch.Tensor,
 		  tau_r:torch.Tensor,
 		  v_th:torch.Tensor,
@@ -57,7 +69,12 @@ def da_dt(v:torch.Tensor,
 	"""
 	return (1/tau_r)*dt*(v>=v_th)
 
-def dv_dt(v,i,tau_m,v_th,dt):
+@torch.jit.script
+def dv_dt(v:torch.Tensor,
+		  i:torch.Tensor,
+		  tau_m:torch.Tensor,
+		  v_th:torch.Tensor,
+		  dt:float):
 
 	"""
 	Function for the membrane potential update using forward Euler
