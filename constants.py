@@ -1,11 +1,19 @@
 import torch
 
+if torch.cuda.is_available():
+	torch.set_default_dtype(torch.float16)
+	torch.set_default_device("cuda")
+	DTYPE = torch.float16
+else:
+	torch.set_default_dtype(torch.float32)
+	DTYPE = torch.float32
+
 # ----------------------
 # ----------------------
 
-NUM_EXCITATORY = 160
-NUM_INHIBITORY = 40
-P_CONNECTION = 0.25 # should be 0.2 but 0.4 for debugging small networks
+NUM_EXCITATORY = 8000
+NUM_INHIBITORY = 2000
+P_CONNECTION = 0.20
 
 # for generalizability, all connections could be slow or fast
 RATIO_SLOW_EXCITATORY_EXCITATORY = 0.5
